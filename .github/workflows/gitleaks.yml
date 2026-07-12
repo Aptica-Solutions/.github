@@ -1,7 +1,7 @@
 name: gitleaks
 permissions:
-contents: read
-pull-requests: read
+  contents: read
+  pull-requests: read
 on:
   pull_request:
   push:
@@ -12,9 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0        # full history so gitleaks can scan all commits
+          fetch-depth: 0
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}   # the fix from before
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
