@@ -1,0 +1,88 @@
+name: Aptica Template Compliance
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  template-compliance:
+    name: Template compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@v4
+
+      - name: Validate template adoption state
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $canonicalTemplate = "Aptica-Solutions/a-repo-template"
+          $marker = ".is-template-repo"
+          $lockPath = ".aptica/template-lock.json"
+
+          if ($env:REPOSITORY -eq $canonicalTemplate) {
+              if (-not (Test-Path -LiteralPath $marker)) {
+                  throw "Canonical template marker '$marker' is missing."
+              }
+              if (-not (Test-Path -LiteralPath ".templatefiles")) {
+                  throw "Canonical template manifest '.templatefiles' is missing."
+              }
+              python .claude/hooks/check-templatefiles.py --check-manifest
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Canonical template manifest integrity validation failed."
+              }
+              exit 0
+          }
+
+          $properties = @{}
+          $propertyJson = gh api --method GET "repos/$($env:REPOSITORY)/properties/values"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to read repository custom properties."
+          }
+          foreach ($property in ($propertyJson | ConvertFrom-Json)) {
+              $properties[$property.property_name] = $property.value
+          }
+
+          $profile = $properties["template_profile"]
+          $release = $properties["template_release"]
+
+          if (-not $profile) {
+              Write-Output "::warning title=Template profile missing::Repository is not classified for template synchronization."
+              exit 0
+          }
+          if ($profile -eq "exempt") {
+              Write-Output "Repository is explicitly exempt from template synchronization."
+              exit 0
+          }
+          if (Test-Path -LiteralPath $marker) {
+              throw "Downstream repository still contains '$marker'. Run template-mode exit before merging."
+          }
+          if (-not (Test-Path -LiteralPath $lockPath)) {
+              Write-Output "::notice title=Template adoption pending::No $lockPath is present yet; enforcement remains advisory during bootstrap."
+              exit 0
+          }
+
+          $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+          foreach ($required in "source_repository", "template_release", "template_commit", "template_profile") {
+              if (-not $lock.$required) {
+                  throw "$lockPath is missing required field '$required'."
+              }
+          }
+          if ($lock.source_repository -ne $canonicalTemplate) {
+              throw "$lockPath references unexpected source '$($lock.source_repository)'."
+          }
+          if ($lock.template_profile -ne $profile) {
+              throw "Template profile mismatch: property='$profile', lock='$($lock.template_profile)'."
+          }
+          if ($release -and $release -ne "unmanaged" -and $lock.template_release -ne $release) {
+              throw "Template release mismatch: property='$release', lock='$($lock.template_release)'."
+          }
+
+          Write-Output "Template adoption metadata is consistent."
